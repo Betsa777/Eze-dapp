@@ -149,7 +149,7 @@ approveBtn.addEventListener('click', async () => {
         }
     }
     if (goodUtxo === undefined) {
-        alert("you're not in the officials.")
+        alert("you're not in the officials. Deposit")
         return
     }
     const datum = Data.from(goodUtxo.datum)
