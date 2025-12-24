@@ -79,13 +79,21 @@ async function connectWallet() {
 depositBtn.addEventListener('click', async function () {
     const { lucid, walletAddress, validatorAddress } = await connectWallet()
     const depositAmount = BigInt(document.getElementById("depositAmt").value) * 1_000_000n
-    const signerPkh = lucid.utils.getAddressDetails(walletAddress).paymentCredential.hash
+    const owner = document.getElementById("owner").value
+    console.log({ owner });
 
+    const fdOfficial1 = document.getElementById("fdOfficial1").value
+    const fdOfficial2 = document.getElementById("fdOfficial2").value
+    const requirements = BigInt(document.getElementById("req").value)
+    const signerPkh = lucid.utils.getAddressDetails(walletAddress).paymentCredential.hash
+    const ownerPkh = lucid.utils.getAddressDetails(owner).paymentCredential.hash
+    const official1Pkh = lucid.utils.getAddressDetails(fdOfficial1).paymentCredential.hash
+    const official2Pkh = lucid.utils.getAddressDetails(fdOfficial2).paymentCredential.hash
     let datumObj = {
         fdTotalAmount: 5_000_000n,
-        fdOwner: signerPkh
-        , fdOfficials: [signerPkh]
-        , fdRequiredApprovals: 1n
+        fdOwner: ownerPkh
+        , fdOfficials: [official1Pkh, official2Pkh]
+        , fdRequiredApprovals: requirements
         , fdApprovals: []
         , fdDeadline: BigInt(new Date().getTime())
     }
@@ -143,13 +151,13 @@ approveBtn.addEventListener('click', async () => {
             , fdApprovals
             , fdDeadline] = datum.fields
 
-        if (fdOfficials.includes(signerPkh)) {
+        if (!fdApprovals.includes(signerPkh) && fdOfficials.includes(signerPkh) && fdOfficials.length > 1) {
             goodUtxo = utxo
             break
         }
     }
     if (goodUtxo === undefined) {
-        alert("you're not in the officials. Deposit")
+        alert("you're not in the officials. Or you have already approve")
         return
     }
     const datum = Data.from(goodUtxo.datum)
@@ -213,6 +221,92 @@ approveBtn.addEventListener('click', async () => {
         console.error(e);
     }
 });
+
+
+
+
+const refundBtn = document.getElementById("refundBtn")
+
+refundBtn.addEventListener("click", async () => {
+    console.log("refund");
+
+    const { lucid, walletAddress, validatorAddress } = await connectWallet()
+
+
+    const signerPkh =
+        lucid.utils.getAddressDetails(walletAddress).paymentCredential.hash
+    console.log("wallet details ", lucid.utils.getAddressDetails(walletAddress));
+    const scriptUtxos = await lucid.utxosAt(validatorAddress)
+    if (scriptUtxos.length === 0) {
+        alert("No funds locked")
+        return
+    }
+    let goodUtxo = undefined
+    for (let utxo of scriptUtxos) {
+
+        const datum = Data.from(utxo.datum)
+        let [fdTotalAmount,
+            fdOwner
+            , fdOfficials
+            , fdRequiredApprovals
+            , fdApprovals
+            , fdDeadline] = datum.fields
+        console.log({ datum });
+
+        if (fdOfficials.length > 1 && signerPkh === fdOwner) {
+            goodUtxo = utxo
+            break
+        }
+    }
+    if (goodUtxo === undefined) {
+        alert("You're not the owner")
+        return
+    }
+    const datum = Data.from(goodUtxo.datum)
+    const [
+        fdTotalAmount,
+        fdOwner,
+        fdOfficials,
+        fdRequiredApprovals,
+        fdApprovals,
+        fdDeadline
+    ] = datum.fields
+
+    const owner = lucid.utils.credentialToAddress({
+        type: "Key",
+        hash: fdOwner
+    })
+    console.log({ owner });
+
+    const userAddress = lucid.utils.credentialToAddress({
+        type: "Key",
+        hash: signerPkh
+    })
+    console.log({ userAddress });
+    const userUtxos = await lucid.wallet.getUtxos()
+    console.log("Now is ", new Date().toLocaleString())
+    console.log("fdDeadline ", new Date(Number(fdDeadline)).toLocaleString())
+    try {
+        const tx = await lucid
+            .newTx()
+            .collectFrom(userUtxos)
+            .collectFrom([goodUtxo], Data.to(new Constr(3, []))) // Refund
+            .addSignerKey(signerPkh)
+            .attachSpendingValidator(validator)
+            .payToAddress(
+                owner,
+                { lovelace: goodUtxo.assets.lovelace }
+            )
+            .validFrom(Number(new Date().getTime())) // MUST be after deadline
+            .complete()
+
+        const signed = await tx.sign().complete()
+        const txHash = await signed.submit()
+        console.log("Refund TX:", txHash)
+    } catch (e) {
+        console.error("Refund failed:", e)
+    }
+})
 
 // // ====================================================================
 // // 8. DATA FETCHING (Concept for a Real dApp)
